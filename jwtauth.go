@@ -166,9 +166,9 @@ func (auth *Authenticator) NewGarbageCollector() chan struct{} {
 	return quit
 }
 
-// encodeToken encodes a jwt.ClaimSet into a cookie and sends it to the
+// EncodeToken encodes a jwt.ClaimSet into a cookie and sends it to the
 // browser client.
-func (auth *Authenticator) encodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) error {
+func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) error {
 
 	expires := time.Now().Add(auth.CookieLifespan)
 	log.Printf("[DEBUG] encode token exp = %s unix = %d", expires, expires.Unix())
@@ -225,7 +225,7 @@ func (auth *Authenticator) tokenReissueHandler(xhnd xhandler.HandlerC, enforce b
 			}
 		} else {
 			// Token heartbeat -- it was valid so issue an updated one
-			auth.encodeToken(w, tok)
+			auth.EncodeToken(w, tok)
 
 			// Put the claimset in the context for the next handler
 			ctx = context.WithValue(ctx, auth.ContextName, tok)

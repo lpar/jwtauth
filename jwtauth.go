@@ -30,6 +30,11 @@ type Authenticator struct {
 	GC             chan struct{} // Channel to control JTI nonce GC
 }
 
+const defaultCookieName = "token"
+const defaultCookieLifespan = time.Hour / 3
+const defaultContextName = "context"
+const defaultLoginURL = "/login"
+
 // NewAuthenticator sets up a new Authenticator object with sensible defaults,
 // using the provided RSA private key.
 
@@ -39,10 +44,10 @@ type Authenticator struct {
 // periodically to make sure memory doesn't fill up.
 func NewAuthenticator(rsakey *rsa.PrivateKey) *Authenticator {
 	auth := &Authenticator{
-		CookieName:     "token",
-		CookieLifespan: time.Hour / 3,
-		ContextName:    "context",
-		LoginURL:       "/login",
+		CookieName:     defaultCookieName,
+		CookieLifespan: defaultCookieLifespan,
+		ContextName:    defaultContextName,
+		LoginURL:       defaultLoginURL,
 		SerialGen:      serial.NewGenerator(),
 		PrivateKey:     rsakey,
 	}

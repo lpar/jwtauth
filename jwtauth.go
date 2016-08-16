@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -31,7 +30,7 @@ type Authenticator struct {
 
 const defaultCookieName = "token"
 const defaultCookieLifespan = time.Hour / 3
-const defaultContextName = "context"
+const defaultContextName = "jwtauth"
 const defaultLoginURL = "/login"
 
 // NewAuthenticator sets up a new Authenticator object with sensible defaults,
@@ -120,10 +119,8 @@ func (auth *Authenticator) decodeToken(r *http.Request) (*jwt.ClaimSet, error) {
 	// Check we got something worthwhile
 	sub := cs.Get("sub").(string)
 	if sub == "" {
-		log.Printf("[DEBUG] claimset for no subject")
 		return cs, fmt.Errorf("empty claimset (no subject)")
 	}
-	log.Printf("[DEBUG] claimset for %s", sub)
 
 	// Check it hasn't expired
 	tokex := cs.Get("exp").(int64)
@@ -175,7 +172,6 @@ func (auth *Authenticator) NewGarbageCollector() chan struct{} {
 func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) error {
 
 	expires := time.Now().Add(auth.CookieLifespan)
-	log.Printf("[DEBUG] encode token exp = %s unix = %d", expires, expires.Unix())
 	cs.Set("exp", expires.Unix())
 	cs.Set("iat", time.Now().Unix())
 	jti := int64(auth.SerialGen.Generate())
@@ -221,7 +217,6 @@ func (auth *Authenticator) tokenReissueHandler(xhnd http.Handler, enforce bool) 
 
 		tok, err := auth.decodeToken(r)
 		if err != nil {
-			log.Printf("[WARN] Invalid token: %s", err)
 			if enforce {
 				// Status 303 = change to GET when redirecting
 				http.Redirect(w, r, auth.LoginURL, http.StatusSeeOther)
@@ -253,4 +248,12 @@ func (auth *Authenticator) TokenAuthenticate(xhnd http.Handler) http.Handler {
 // authentication).
 func (auth *Authenticator) TokenHeartbeat(xhnd http.Handler) http.Handler {
 	return auth.tokenReissueHandler(xhnd, false)
+}
+
+// ClaimSetFromRequest is a convenience function to fetch the claimset
+// from the context on the request object.
+func (auth *Authenticator) ClaimSetFromRequest(r *http.Request) (*jwt.ClaimSet, bool) {
+	ctx := r.Context()
+	cs, ok := ctx.Value(auth.ContextName).(*jwt.ClaimSet)
+	return cs, ok
 }

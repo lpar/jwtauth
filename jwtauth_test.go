@@ -1,14 +1,15 @@
 package jwtauth
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"flag"
 	"fmt"
+	pseudorand "math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,15 +53,16 @@ func (auth *Authenticator) testCookieHandler(w http.ResponseWriter, r *http.Requ
 // A handler which simply records that it was called and the context it
 // was called with
 type RecordingHandler struct {
-	Called  bool
-	Context context.Context
+	Called   bool
+	ClaimSet *jwt.ClaimSet
 }
 
 var recordingHandler = RecordingHandler{}
 
 func (h RecordingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.Called = true
-	h.Context = r.Context()
+	// Not h, we need to store the values in the global
+	recordingHandler.ClaimSet,
+		recordingHandler.Called = auth.ClaimSetFromRequest(r)
 }
 
 func getCookie(r *http.Response, name string) (*http.Cookie, error) {
@@ -82,27 +84,27 @@ func getTestCookie(t *testing.T) (*http.Cookie, error) {
 		t.Fatal(err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unexpected http response %d", resp.StatusCode)
+		t.Fatalf("Unexpected http response %d", resp.StatusCode)
 	}
 	ctok, err := getCookie(resp, defaultCookieName)
 	if err != nil {
-		t.Errorf("unable to issue token: %s", err)
+		t.Errorf("Unable to issue token: %s", err)
 	}
 	return ctok, err
 }
 
 func verifyTestCookie(t *testing.T, ctok *http.Cookie) {
 	if ctok.Path != "/" {
-		t.Errorf("wrong cookie path, expected / got %s", ctok.Path)
+		t.Errorf("Wrong cookie path, expected / got %s", ctok.Path)
 	}
 	exp := ctok.Expires
 	expexp := time.Now().Add(defaultCookieLifespan)
 	durd := expexp.Sub(exp)
 	if durd > time.Second {
-		t.Errorf("cookie lifetime incorrect, expected %v got %v", expexp.UTC(), exp.UTC())
+		t.Errorf("Cookie lifetime incorrect, expected %v got %v", expexp.UTC(), exp.UTC())
 	}
 	if ctok.HttpOnly != true {
-		t.Error("cookie not marked as HttpOnly (XSS vulnerability)")
+		t.Error("Cookie not marked as HttpOnly (XSS vulnerability)")
 	}
 }
 
@@ -110,7 +112,7 @@ func verifyClaimSet(t *testing.T, cs *jwt.ClaimSet) {
 	for k, v := range testData {
 		xv := cs.Get(k)
 		if xv != v {
-			t.Errorf("wrong %s, expected %s got %s", k, xv, v)
+			t.Errorf("Wrong %s, expected %s got %s", k, xv, v)
 		}
 	}
 }
@@ -119,25 +121,29 @@ func TestEncodeDecode(t *testing.T) {
 	// Test encode/issue
 	ctok, err := getTestCookie(t)
 	if err != nil {
-		t.Errorf("failed to get test cookie: %s", err)
+		t.Errorf("Failed to get test cookie: %s", err)
 	}
 	verifyTestCookie(t, ctok)
 
 	// Test decode
 	req, err := http.NewRequest("GET", "/random", nil)
 	if err != nil {
-		t.Errorf("unable to create http request: %s", err)
+		t.Errorf("Unable to create http request: %s", err)
 	}
 	req.AddCookie(ctok)
 	ncs, err := auth.decodeToken(req)
 	if err != nil {
-		t.Errorf("token decode failed: %s", err)
+		t.Errorf("Token decode failed: %s", err)
 	}
 	verifyClaimSet(t, ncs)
 }
 
 func getWithCookie(ts *httptest.Server, c *http.Cookie) (*http.Response, error) {
-	client := &http.Client{}
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	req, err := http.NewRequest("GET", ts.URL, nil)
 	req.AddCookie(c)
 	resp, err := client.Do(req)
@@ -147,7 +153,7 @@ func getWithCookie(ts *httptest.Server, c *http.Cookie) (*http.Response, error) 
 func TestHeartbeat(t *testing.T) {
 	ctok, err := getTestCookie(t)
 	if err != nil {
-		t.Errorf("error getting a test cookie: %s", err)
+		t.Errorf("Error getting a test cookie: %s", err)
 	}
 
 	ts := httptest.NewServer(auth.TokenHeartbeat(recordingHandler))
@@ -155,11 +161,102 @@ func TestHeartbeat(t *testing.T) {
 
 	resp, err := getWithCookie(ts, ctok)
 	if err != nil {
-		t.Errorf("error performing heartbeat GET: %s", err)
+		t.Errorf("Error performing heartbeat GET: %s", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unexpected http response %d", resp.StatusCode)
+		t.Fatalf("Unexpected http response %d", resp.StatusCode)
 	}
 	newtok, err := getCookie(resp, defaultCookieName)
+	if err != nil {
+		t.Errorf("Bad cookie get on heartbeat: %s", err)
+	}
 	verifyTestCookie(t, newtok)
+
+	if !recordingHandler.Called {
+		t.Errorf("Heartbeat handler didn't pass through to next handler")
+	}
+	cs := recordingHandler.ClaimSet
+
+	attrs := []string{"sub", "name", "given_name", "family_name", "email"}
+
+	for _, k := range attrs {
+		v := cs.Get(k).(string)
+		if v != testData[k] {
+			t.Errorf("Bad value %s in passthrough context, expected %s got %s", k, testData[k], v)
+		}
+	}
+
+}
+
+func TestLogout(t *testing.T) {
+	ctok, err := getTestCookie(t)
+	if err != nil {
+		t.Errorf("Error getting a test cookie: %s", err)
+	}
+	ts := httptest.NewServer(auth.Logout(recordingHandler))
+	defer ts.Close()
+
+	resp, err := getWithCookie(ts, ctok)
+	cook, err := getCookie(resp, defaultCookieName)
+	if err != nil {
+		t.Errorf("Bad cookie get on logout: %s", err)
+	}
+	if cook.Name != defaultCookieName {
+		t.Error("Cookie not set on logout")
+	}
+	if cook.Value != "" {
+		t.Error("Cookie survived logout")
+	}
+	if cook.MaxAge > 0 {
+		t.Error("Cookie not set to expire on logout")
+	}
+}
+
+func TestAuthRedirect(t *testing.T) {
+	ts := httptest.NewServer(auth.TokenAuthenticate(recordingHandler))
+	defer ts.Close()
+
+	resp, err := getWithCookie(ts, &http.Cookie{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("Authentication fail (no cookie) didn't redirect, expected %d, got %d",
+			http.StatusSeeOther, resp.StatusCode)
+	}
+}
+
+func corrupt(x string) string {
+	b := []byte(x)
+	i := pseudorand.Intn(len(b))
+	b[i] = b[i] ^ 1
+	return string(b)
+}
+
+func TestCorruptCookie(t *testing.T) {
+	ts := httptest.NewServer(auth.TokenAuthenticate(recordingHandler))
+	defer ts.Close()
+
+	cook, err := getTestCookie(t)
+	if err != nil {
+		t.Errorf("Error getting a test cookie: %s", err)
+	}
+
+	chunks := strings.SplitN(cook.Value, ".", 3)
+	if len(chunks) != 3 {
+		t.Errorf("JWT had wrong number of chunks, expected 3 got %d", len(chunks))
+	}
+	// Chunks are header, payload and signature. Let's try corrupting the
+	// signature.
+	badsig := fmt.Sprintf("%s.%s.%s", chunks[0], chunks[1], corrupt(chunks[2]))
+	cook.Value = badsig
+
+	resp, err := getWithCookie(ts, &http.Cookie{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("Authentication fail (bad cookie) didn't redirect, expected %d, got %d",
+			http.StatusSeeOther, resp.StatusCode)
+	}
 }

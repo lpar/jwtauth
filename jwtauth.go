@@ -3,6 +3,7 @@
 package jwtauth
 
 import (
+	"context"
 	"crypto/rsa"
 	"fmt"
 	"log"
@@ -14,8 +15,6 @@ import (
 	"github.com/lestrrat/go-jwx/jwe"
 	"github.com/lestrrat/go-jwx/jwt"
 	"github.com/lpar/serial"
-	"github.com/rs/xhandler"
-	"golang.org/x/net/context"
 )
 
 // Authenticator provides a structure for the run-time parameters controlling
@@ -74,8 +73,8 @@ const jtiNumericBase = 36
 
 // Logout triggers a logout by refreshing the cookie with an empty value and
 // an expiry time indicating that it should immediately be deleted.
-func (auth *Authenticator) Logout(next ...xhandler.HandlerC) xhandler.HandlerC {
-	return xhandler.HandlerFuncC(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (auth *Authenticator) Logout(next ...http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie := &http.Cookie{
 			Name:     auth.CookieName,
 			Value:    "",
@@ -88,7 +87,7 @@ func (auth *Authenticator) Logout(next ...xhandler.HandlerC) xhandler.HandlerC {
 			http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 			return
 		}
-		next[0].ServeHTTPC(ctx, w, r)
+		next[0].ServeHTTP(w, r)
 	})
 }
 
@@ -210,11 +209,11 @@ func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) 
 // checking and reissuing. If enforce is true, lack of a valid token
 // results in a redirection to the login page and the next handler NOT
 // being called; otherwise the token is allowed to expire silently.
-func (auth *Authenticator) tokenReissueHandler(xhnd xhandler.HandlerC, enforce bool) http.Handler {
+func (auth *Authenticator) tokenReissueHandler(xhnd http.Handler, enforce bool) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-		ctx := context.Background()
+		ctx := r.Context()
 
 		if auth.PrivateKey == nil {
 			panic("No private key!")
@@ -232,25 +231,26 @@ func (auth *Authenticator) tokenReissueHandler(xhnd xhandler.HandlerC, enforce b
 			// Token heartbeat -- it was valid so issue an updated one
 			auth.EncodeToken(w, tok)
 
-			// Put the claimset in the context for the next handler
+			// Put the claimset in the request context for the next handler
 			ctx = context.WithValue(ctx, auth.ContextName, tok)
+			r = r.WithContext(ctx)
 		}
 
 		// Call the next handler in the chain
-		xhnd.ServeHTTPC(ctx, w, r)
+		xhnd.ServeHTTP(w, r)
 	})
 }
 
-// TokenAuthenticate wraps a HandlerC and requires a valid token (i.e.
+// TokenAuthenticate wraps a Handler and requires a valid token (i.e.
 // requires authentication), or else the user is redirected to the login
 // page and the next handler is NOT called.
-func (auth *Authenticator) TokenAuthenticate(xhnd xhandler.HandlerC) http.Handler {
+func (auth *Authenticator) TokenAuthenticate(xhnd http.Handler) http.Handler {
 	return auth.tokenReissueHandler(xhnd, true)
 }
 
 // TokenHeartbeat wraps a HandlerC and performs heartbeat update of any
 // token found, but does not require a token (i.e does not require
 // authentication).
-func (auth *Authenticator) TokenHeartbeat(xhnd xhandler.HandlerC) http.Handler {
+func (auth *Authenticator) TokenHeartbeat(xhnd http.Handler) http.Handler {
 	return auth.tokenReissueHandler(xhnd, false)
 }

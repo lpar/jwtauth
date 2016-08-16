@@ -1,6 +1,7 @@
 package jwtauth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"flag"
@@ -10,8 +11,6 @@ import (
 	"os"
 	"testing"
 	"time"
-
-	"golang.org/x/net/context"
 
 	"github.com/lestrrat/go-jwx/jwt"
 )
@@ -50,7 +49,7 @@ func (auth *Authenticator) testCookieHandler(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// An xhandler which simply records that it was called and the context it
+// A handler which simply records that it was called and the context it
 // was called with
 type RecordingHandler struct {
 	Called  bool
@@ -59,9 +58,9 @@ type RecordingHandler struct {
 
 var recordingHandler = RecordingHandler{}
 
-func (h RecordingHandler) ServeHTTPC(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (h RecordingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Called = true
-	h.Context = ctx
+	h.Context = r.Context()
 }
 
 func getCookie(r *http.Response, name string) (*http.Cookie, error) {

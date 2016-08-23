@@ -41,7 +41,10 @@ var testData = map[string]string{
 func (auth *Authenticator) testCookieHandler(w http.ResponseWriter, r *http.Request) {
 	cs := jwt.NewClaimSet()
 	for k, v := range testData {
-		cs.Set(k, v)
+		err := cs.Set(k, v)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Error setting %s value: %s", k, err.Error()), http.StatusInternalServerError)
+		}
 	}
 	err := auth.EncodeToken(w, cs)
 	if err != nil {
@@ -103,7 +106,7 @@ func verifyTestCookie(t *testing.T, ctok *http.Cookie) {
 	if durd > time.Second {
 		t.Errorf("Cookie lifetime incorrect, expected %v got %v", expexp.UTC(), exp.UTC())
 	}
-	if ctok.HttpOnly != true {
+	if !ctok.HttpOnly {
 		t.Error("Cookie not marked as HttpOnly (XSS vulnerability)")
 	}
 }

@@ -1,5 +1,5 @@
-// jwtauth implements (mostly) stateless web session authentication using JSON
-// Web Tokens (JWT).
+// Package jwtauth implements (mostly) stateless web session authentication
+// using JSON Web Tokens (JWT).
 package jwtauth
 
 import (
@@ -35,7 +35,6 @@ const defaultLoginURL = "/login"
 
 // NewAuthenticator sets up a new Authenticator object with sensible defaults,
 // using the provided RSA private key.
-
 // Once any parameters have been updated to taste, you can call StartGC to
 // begin a periodic background task which will expire old data from the jti
 // nonce blacklist. If you don't do so, you should call ExpireSeen yourself
@@ -172,10 +171,19 @@ func (auth *Authenticator) NewGarbageCollector() chan struct{} {
 func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) error {
 
 	expires := time.Now().Add(auth.CookieLifespan)
-	cs.Set("exp", expires.Unix())
-	cs.Set("iat", time.Now().Unix())
+	err := cs.Set("exp", expires.Unix())
+	if err != nil {
+		return fmt.Errorf("can't set exp value: %s", err)
+	}
+	err = cs.Set("iat", time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("can't set iat value: %s", err)
+	}
 	jti := int64(auth.SerialGen.Generate())
-	cs.Set("jti", strconv.FormatInt(jti, jtiNumericBase))
+	if err != nil {
+		return fmt.Errorf("can't set jti value: %s", err)
+	}
+	err = cs.Set("jti", strconv.FormatInt(jti, jtiNumericBase))
 	ntok, err := cs.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("token marshalling error: %s", err)
@@ -224,7 +232,11 @@ func (auth *Authenticator) tokenReissueHandler(xhnd http.Handler, enforce bool) 
 			}
 		} else {
 			// Token heartbeat -- it was valid so issue an updated one
-			auth.EncodeToken(w, tok)
+			err := auth.EncodeToken(w, tok)
+			if err != nil {
+				http.Error(w, "Error encoding JSON Web Token", http.StatusInternalServerError)
+				return
+			}
 
 			// Put the claimset in the request context for the next handler
 			ctx = context.WithValue(ctx, auth.ContextName, tok)

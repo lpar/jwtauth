@@ -32,3 +32,10 @@ chain using Go's Context mechanism.
 Since tokens are one time only, sessions must be kept alive by reissuing
 updated tokens. A heartbeat handler is provided to do this for page loads
 which do not require authentication.
+
+## Other options
+
+If you want a lot more configurability at the cost of some complexity, you
+might want to check out
+[adam-hanna/jwt-auth](https://github.com/adam-hanna/jwt-auth) instead.
+

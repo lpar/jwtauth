@@ -263,3 +263,13 @@ func TestCorruptCookie(t *testing.T) {
 			http.StatusSeeOther, resp.StatusCode)
 	}
 }
+
+// Make sure we don't succeed or cause a panic trying to fetch a ClaimSet
+// from a request which lacks one
+func TestSafeCSGet(t *testing.T) {
+	r := &http.Request{}
+	_, ok := auth.ClaimSetFromRequest(r)
+	if ok {
+		t.Errorf("ClaimSetFromRequest returned OK from Request with no ClaimSet")
+	}
+}

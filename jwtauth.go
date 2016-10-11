@@ -266,6 +266,9 @@ func (auth *Authenticator) TokenHeartbeat(xhnd http.Handler) http.Handler {
 // from the context on the request object.
 func (auth *Authenticator) ClaimSetFromRequest(r *http.Request) (*jwt.ClaimSet, bool) {
 	ctx := r.Context()
+	if ctx == nil {
+		return nil, false
+	}
 	cs, ok := ctx.Value(auth.ContextName).(*jwt.ClaimSet)
 	return cs, ok
 }

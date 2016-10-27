@@ -209,43 +209,52 @@ func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) 
 	return nil
 }
 
-// tokenReissueHandler deals with the details of authentication token
-// checking and reissuing. If enforce is true, lack of a valid token
-// results in a redirection to the login page and the next handler NOT
-// being called; otherwise the token is allowed to expire silently.
-func (auth *Authenticator) tokenReissueHandler(xhnd http.Handler, enforce bool) http.Handler {
+// tokenReissue handles the guts of the authentication. It checks for a token,
+// and if a valid token is found, a new token is issued. If no valid token is
+// found and 'enforce' is set to true, it issues a redirect to the LoginURL.
+func tokenReissue(w http.ResponseWriter, r *http.Request, enforce bool) *http.Request {
+	ctx := r.Context()
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	if auth.PrivateKey == nil {
+		panic("No private key!")
+	}
 
-		ctx := r.Context()
-
-		if auth.PrivateKey == nil {
-			panic("No private key!")
+	tok, err := auth.decodeToken(r)
+	if err != nil {
+		if enforce {
+			// Status 303 = change to GET when redirecting
+			http.Redirect(w, r, auth.LoginURL, http.StatusSeeOther)
+			return r
 		}
-
-		tok, err := auth.decodeToken(r)
+	} else {
+		// Token heartbeat -- it was valid so issue an updated one
+		err := auth.EncodeToken(w, tok)
 		if err != nil {
-			if enforce {
-				// Status 303 = change to GET when redirecting
-				http.Redirect(w, r, auth.LoginURL, http.StatusSeeOther)
-				return
-			}
-		} else {
-			// Token heartbeat -- it was valid so issue an updated one
-			err := auth.EncodeToken(w, tok)
-			if err != nil {
-				http.Error(w, "Error encoding JSON Web Token", http.StatusInternalServerError)
-				return
-			}
-
-			// Put the claimset in the request context for the next handler
-			ctx = context.WithValue(ctx, auth.ContextName, tok)
-			r = r.WithContext(ctx)
+			http.Error(w, "Error encoding JSON Web Token", http.StatusInternalServerError)
+			return r
 		}
 
-		// Call the next handler in the chain
+		// Put the claimset in the request context for the next handler
+		ctx = context.WithValue(ctx, auth.ContextName, tok)
+		r = r.WithContext(ctx)
+	}
+	return r
+}
+
+// tokenReissueHandler returns a Handler which calls tokenReissue.
+func (auth *Authenticator) tokenReissueHandler(xhnd http.Handler, enforce bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = tokenReissue(w, r, enforce)
 		xhnd.ServeHTTP(w, r)
 	})
+}
+
+// tokenReissueFunc returns a HandlerFunc which calls tokenReissue.
+func (auth *Authenticator) tokenReissueFunc(fn http.HandlerFunc, enforce bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r = tokenReissue(w, r, enforce)
+		fn(w, r)
+	}
 }
 
 // TokenAuthenticate wraps a Handler and requires a valid token (i.e.
@@ -255,11 +264,23 @@ func (auth *Authenticator) TokenAuthenticate(xhnd http.Handler) http.Handler {
 	return auth.tokenReissueHandler(xhnd, true)
 }
 
-// TokenHeartbeat wraps a HandlerC and performs heartbeat update of any
+// TokenHeartbeat wraps a Handler and performs heartbeat update of any
 // token found, but does not require a token (i.e does not require
 // authentication).
 func (auth *Authenticator) TokenHeartbeat(xhnd http.Handler) http.Handler {
 	return auth.tokenReissueHandler(xhnd, false)
+}
+
+// TokenAuthenticateFunc is a HandlerFunc version of TokenAuthenticate.
+// It wraps a HandlerFunc instead of wrapping a Handler.
+func (auth *Authenticator) TokenAuthenticateFunc(fn http.HandlerFunc) http.HandlerFunc {
+	return auth.tokenReissueFunc(fn, true)
+}
+
+// TokenHeartbeatFunc is a HandlerFunc version of TokenHeartbeat.
+// It wraps a HandlerFunc instead of wrapping a Handler.
+func (auth *Authenticator) TokenHeartbeatFunc(fn http.HandlerFunc) http.HandlerFunc {
+	return auth.tokenReissueFunc(fn, false)
 }
 
 // ClaimSetFromRequest is a convenience function to fetch the claimset

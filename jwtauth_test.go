@@ -68,6 +68,12 @@ func (h RecordingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		recordingHandler.Called = auth.ClaimSetFromRequest(r)
 }
 
+// HandlerFunc method so we can test that wrapper interface too
+func (h RecordingHandler) Handle(w http.ResponseWriter, r *http.Request) {
+	recordingHandler.ClaimSet,
+		recordingHandler.Called = auth.ClaimSetFromRequest(r)
+}
+
 func getCookie(r *http.Response, name string) (*http.Cookie, error) {
 	cookies := r.Cookies()
 	for _, c := range cookies {
@@ -191,6 +197,44 @@ func TestHeartbeat(t *testing.T) {
 
 }
 
+func TestHeartbeatFunc(t *testing.T) {
+	ctok, err := getTestCookie(t)
+	if err != nil {
+		t.Errorf("Error getting a test cookie: %s", err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(auth.TokenHeartbeatFunc(recordingHandler.Handle)))
+	defer ts.Close()
+
+	resp, err := getWithCookie(ts, ctok)
+	if err != nil {
+		t.Errorf("Error performing heartbeat GET: %s", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Unexpected http response %d", resp.StatusCode)
+	}
+	newtok, err := getCookie(resp, defaultCookieName)
+	if err != nil {
+		t.Errorf("Bad cookie get on heartbeat: %s", err)
+	}
+	verifyTestCookie(t, newtok)
+
+	if !recordingHandler.Called {
+		t.Errorf("Heartbeat handler didn't pass through to next handler")
+	}
+	cs := recordingHandler.ClaimSet
+
+	attrs := []string{"sub", "name", "given_name", "family_name", "email"}
+
+	for _, k := range attrs {
+		v := cs.Get(k).(string)
+		if v != testData[k] {
+			t.Errorf("Bad value %s in passthrough context, expected %s got %s", k, testData[k], v)
+		}
+	}
+
+}
+
 func TestLogout(t *testing.T) {
 	ctok, err := getTestCookie(t)
 	if err != nil {
@@ -217,6 +261,20 @@ func TestLogout(t *testing.T) {
 
 func TestAuthRedirect(t *testing.T) {
 	ts := httptest.NewServer(auth.TokenAuthenticate(recordingHandler))
+	defer ts.Close()
+
+	resp, err := getWithCookie(ts, &http.Cookie{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("Authentication fail (no cookie) didn't redirect, expected %d, got %d",
+			http.StatusSeeOther, resp.StatusCode)
+	}
+}
+
+func TestAuthRedirectFunc(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(auth.TokenAuthenticateFunc(recordingHandler.Handle)))
 	defer ts.Close()
 
 	resp, err := getWithCookie(ts, &http.Cookie{})

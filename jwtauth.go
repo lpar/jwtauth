@@ -212,7 +212,7 @@ func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) 
 // tokenReissue handles the guts of the authentication. It checks for a token,
 // and if a valid token is found, a new token is issued. If no valid token is
 // found and 'enforce' is set to true, it issues a redirect to the LoginURL.
-func tokenReissue(w http.ResponseWriter, r *http.Request, enforce bool) *http.Request {
+func (auth *Authenticator) tokenReissue(w http.ResponseWriter, r *http.Request, enforce bool) *http.Request {
 	ctx := r.Context()
 
 	if auth.PrivateKey == nil {
@@ -244,7 +244,7 @@ func tokenReissue(w http.ResponseWriter, r *http.Request, enforce bool) *http.Re
 // tokenReissueHandler returns a Handler which calls tokenReissue.
 func (auth *Authenticator) tokenReissueHandler(xhnd http.Handler, enforce bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r = tokenReissue(w, r, enforce)
+		r = auth.tokenReissue(w, r, enforce)
 		xhnd.ServeHTTP(w, r)
 	})
 }
@@ -252,7 +252,7 @@ func (auth *Authenticator) tokenReissueHandler(xhnd http.Handler, enforce bool) 
 // tokenReissueFunc returns a HandlerFunc which calls tokenReissue.
 func (auth *Authenticator) tokenReissueFunc(fn http.HandlerFunc, enforce bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		r = tokenReissue(w, r, enforce)
+		r = auth.tokenReissue(w, r, enforce)
 		fn(w, r)
 	}
 }

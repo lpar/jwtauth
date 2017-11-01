@@ -184,6 +184,9 @@ func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) 
 		return fmt.Errorf("can't set jti value: %s", err)
 	}
 	err = cs.Set("jti", strconv.FormatInt(jti, jtiNumericBase))
+	if err != nil {
+		return fmt.Errorf("token jti construction error: %s", err)
+	}
 	ntok, err := cs.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("token marshalling error: %s", err)

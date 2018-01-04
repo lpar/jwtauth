@@ -9,10 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/lestrrat/go-jwx/jwa"
+	"github.com/lestrrat/go-jwx/jwe"
 	"github.com/lestrrat/go-jwx/jwt"
 )
 
@@ -329,5 +332,93 @@ func TestSafeCSGet(t *testing.T) {
 	_, ok := auth.ClaimSetFromRequest(r)
 	if ok {
 		t.Errorf("ClaimSetFromRequest returned OK from Request with no ClaimSet")
+	}
+}
+
+// Make sure that a cookie with the user's choice of a1gorithm won't work,
+// even if they had the right keys.
+//
+// The theory is that anyone can can get the public key, and if a token is signed with HS256 and the public key,
+// it will successfully verify when decoded using the private key, because HMAC-SHA is symmetric.
+//
+// See <https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/>
+func TestEvilAlgo(t *testing.T) {
+
+	// Construct a claimset complete with valid iat, jti
+	cs := jwt.NewClaimSet()
+	for k, v := range testData {
+		err := cs.Set(k, v)
+		if err != nil {
+			t.Errorf("Error setting %s value: %s", k, err)
+		}
+	}
+	err := cs.Set("iat", time.Now().Unix())
+	if err != nil {
+		t.Errorf("can't set iat value: %s", err)
+	}
+	jti := int64(auth.SerialGen.Generate())
+	err = cs.Set("jti", strconv.FormatInt(jti, jtiNumericBase))
+	if err != nil {
+		t.Errorf("can't set jti value: %s", err)
+	}
+	badtok, err := cs.MarshalJSON()
+	if err != nil {
+		t.Errorf("token marshalling error: %s", err)
+	}
+
+	enc, err := jwe.Encrypt(badtok, jwa.RSA1_5, &auth.PrivateKey.PublicKey, jwa.A128CBC_HS256, jwa.Deflate)
+	if err != nil {
+		t.Errorf("token encryption error: %s", err)
+	}
+
+	expires := time.Now().Add(time.Hour)
+
+	cookie := &http.Cookie{
+		Name:     auth.CookieName,
+		Value:    string(enc),
+		Expires:  expires,
+		MaxAge:   86400,
+		HttpOnly: true,
+		Path:     "/",
+	}
+
+	req, err := http.NewRequest("GET", "/random", nil)
+	if err != nil {
+		t.Errorf("Unable to create http request: %s", err)
+	}
+	req.AddCookie(cookie)
+
+	_, err = auth.decodeToken(req)
+	if err == nil {
+		t.Errorf("Malicious signed token decode succeeded!")
+	}
+
+}
+
+// Make sure that an unencrypted JWT assembled with algorithm 'none' is not accepted.
+func TestEvil(t *testing.T) {
+
+	eviltoken := "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ0ZXN0QGV4YW1wbGUuY29tIiwibmFtZSI6IktldmluIE1pdG5pY2siLCJnaXZlbl9uYW1lIjoiS2V2aW4iLCJmYW1pbHlfbmFtZSI6Ik1pdG5pY2siLCJlbWFpbCI6Im1pdG5pY2tAZXhhbXBsZS5jb20ifQ.NzG-9jkRvm7UFkgiGdpBUottduDbSXY9xMq_EqrXdO4"
+
+	expires := time.Now().Add(time.Hour)
+
+	cookie := &http.Cookie{
+		Name:     auth.CookieName,
+		Value:    eviltoken,
+		Expires:  expires,
+		MaxAge:   86400,
+		HttpOnly: true,
+		Path:     "/",
+	}
+
+	req, err := http.NewRequest("GET", "/random", nil)
+	if err != nil {
+		t.Errorf("Unable to create http request: %s", err)
+	}
+	req.AddCookie(cookie)
+
+	_, err = auth.decodeToken(req)
+	if err == nil {
+		t.Errorf("Malicious token decode succeeded!")
 	}
 }

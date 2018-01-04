@@ -103,9 +103,10 @@ func (auth *Authenticator) decodeToken(r *http.Request) (*jwt.ClaimSet, error) {
 		return cs, fmt.Errorf("no token cookie '%s'", auth.CookieName)
 	}
 
-	// Decode it
 	stok := ctok.Value
-	dec, err := jwe.Decrypt([]byte(stok), jwa.RSA1_5, auth.PrivateKey)
+	// Note that we don't allow the token to determine which encryption algorithm to use!
+	// See <https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/> for why not.
+	dec, err := jwe.Decrypt([]byte(stok), jwa.RSA_OAEP_256, auth.PrivateKey)
 	if err != nil {
 		return cs, err
 	}
@@ -180,9 +181,6 @@ func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) 
 		return fmt.Errorf("can't set iat value: %s", err)
 	}
 	jti := int64(auth.SerialGen.Generate())
-	if err != nil {
-		return fmt.Errorf("can't set jti value: %s", err)
-	}
 	err = cs.Set("jti", strconv.FormatInt(jti, jtiNumericBase))
 	if err != nil {
 		return fmt.Errorf("token jti construction error: %s", err)
@@ -192,7 +190,10 @@ func (auth *Authenticator) EncodeToken(w http.ResponseWriter, cs *jwt.ClaimSet) 
 		return fmt.Errorf("token marshalling error: %s", err)
 	}
 
-	enc, err := jwe.Encrypt(ntok, jwa.RSA1_5, &auth.PrivateKey.PublicKey, jwa.A128CBC_HS256, jwa.Deflate)
+	// We use A128CBC_HS256 for the internal payload encryption because the HS256 variants are more widely supported.
+	// The session key from that is then encrypted using RSA_OAEP_256.
+	// See <https://connect2id.com/products/nimbus-jose-jwt/algorithm-selection-guide>
+	enc, err := jwe.Encrypt(ntok, jwa.RSA_OAEP_256, &auth.PrivateKey.PublicKey, jwa.A128CBC_HS256, jwa.Deflate)
 	if err != nil {
 		return fmt.Errorf("token encryption error: %s", err)
 	}

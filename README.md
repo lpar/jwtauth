@@ -4,6 +4,8 @@
 This library implements (mostly) stateless web session authentication using
 JSON Web Tokens (JWT).
 
+As of 2018, I recommend [pasetosession](https://github.com/lpar/pasetosession) instead.
+
 Initiating login and checking credentials is left to the caller, as it depends
 heavily on the sign-in technology used. Once you've established who the user is
 once, this library gives you a way to track that information securely
